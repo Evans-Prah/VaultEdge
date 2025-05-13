@@ -6,5 +6,6 @@ const authController = new AuthController();
 
 // Public routes
 authRouter.post('/register', authController.register);
+authRouter.post('/login', authController.login);
 
 export default authRouter;

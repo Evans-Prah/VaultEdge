@@ -7,31 +7,30 @@ export class AppError extends Error {
 
     constructor(message: string, statusCode: number) {
         super(message);
-        this.statusCode    = statusCode;
+        this.statusCode = statusCode;
         this.isOperational = true;
         Error.captureStackTrace(this, this.constructor);
     }
 }
 
-export const errorHandler: ErrorRequestHandler = (err, req, res) => {
+export const errorHandler: ErrorRequestHandler = (err, req, res, next): void => {
     const appError = err as AppError;
 
     if (appError.isOperational) {
         res.status(appError.statusCode).json({
-            status:  "error",
+            status: "error",
             message: appError.message,
         });
         return;
     }
 
-    logger.error("Unexpected error:", err);
+    logger.error("Unexpected error:", { error: err.message, stack: err.stack });
 
     res.status(500).json({
-        status:  "error",
+        status: "error",
         message:
             process.env.NODE_ENV === "production"
                 ? "Something went wrong"
                 : err.message || "Internal server error",
     });
-    return;
 };

@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import {AuthService, IAuthService} from "./auth.service";
 import {RegisterDto} from "./dto/register.dto";
 import {registerSchema} from "./schemas/register.schema";
+import {loginSchema} from "./schemas/login.schema";
+import {LoginDto} from "./dto/login.dto";
 
 
 export class AuthController {
@@ -61,4 +63,37 @@ export class AuthController {
             next(err);
         }
     };
+
+    /**
+     * @swagger
+     * /auth/login:
+     *   post:
+     *     summary: Login a user
+     *     tags: [Auth]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               email:
+     *                 type: string
+     *                 format: email
+     *               password:
+     *                 type: string
+     *
+     */
+    login = async (
+        req: Request,
+        res: Response,
+        next: NextFunction): Promise<void> => {
+        try {
+            const payload = loginSchema.parse(req.body) as LoginDto;
+            const result = await this.authService.login(payload);
+            res.status(result.status_code).json(result);
+        } catch (err) {
+            next(err);
+        }
+    }
 }
