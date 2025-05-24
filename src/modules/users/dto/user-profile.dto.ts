@@ -1,5 +1,24 @@
 import {KYCStatus, User} from "../../../shared/entities/user.entity";
 
+
+export interface Address {
+    street: string;
+    city: string;
+    state: string;
+    country: string;
+    postal_code: string;
+}
+
+
+export interface KycDocument {
+    type: string;
+    number: string;
+    issued_by?: string;
+    verification_date?: Date;
+    front_image?: string;
+    back_image?: string;
+}
+
 export class UserProfileDto {
     id?: string;
     email?: string;
@@ -13,26 +32,13 @@ export class UserProfileDto {
     kycStatus?: KYCStatus;
     createdAt?: Date;
     updatedAt?: Date;
-    address?: {
-        street: string;
-        city: string;
-        state: string;
-        country: string;
-        postal_code: string;
-    };
-    kycDocument?: {
-        type: string;
-        number: string;
-        issued_by?: string;
-        verification_date?: Date;
-        front_image?: string;
-        back_image?: string;
-    };
+    address?: Address;
+    kycDocument?: KycDocument;
 
 
     // Omit sensitive information like password and full KYC documents
     static fromEntity(user: User): UserProfileDto {
-        return {
+        const profile: UserProfileDto = {
             id: user.id,
             email: user.email,
             firstName: user.firstName,
@@ -45,9 +51,21 @@ export class UserProfileDto {
             kycStatus: user.kycStatus,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
-            address: user.address,
-            kycDocument: user.kycDocument,
         };
+
+        if (user.address) {
+            profile.address = user.address;
+        }
+
+        if (user.kycDocument) {
+            profile.kycDocument = user.kycDocument;
+        }
+
+        return profile;
+    }
+
+    static fromEntities(users: User[]): UserProfileDto[] {
+        return users.map(user => this.fromEntity(user));
     }
 }
 
@@ -57,11 +75,5 @@ export class UpdateUserDto {
     otherNames?: string;
     phoneNumber?: string;
     dateOfBirth?: string;
-    address?: {
-        street: string;
-        city: string;
-        state: string;
-        country: string;
-        postal_code: string;
-    };
+    address?: Address;
 }

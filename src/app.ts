@@ -18,6 +18,7 @@ import {snakeCaseRequestMiddleware} from "./middleware/snake-case-request";
 // Import routes
 import authRoutes from './modules/auth/auth.routes';
 import userRoutes from "./modules/users/user.routes";
+import walletRouter from "./modules/wallet/wallet.routes";
 
 const app = express();
 
@@ -79,6 +80,7 @@ app.use(requestLogger);
 // API Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/profile', userRoutes);
+app.use('/api/v1/wallets', walletRouter);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok' });

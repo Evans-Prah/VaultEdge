@@ -6,6 +6,34 @@ import {KYCStatus, User} from "../../shared/entities/user.entity";
 import {Repository} from "typeorm";
 import {EventPublisher} from "../../utils/event-publisher";
 
+
+type KYCEvent =
+    | { type: 'KYC_VERIFICATION_STARTED'; payload: KYCStartedPayload }
+    | { type: 'KYC_VERIFICATION_COMPLETED'; payload: KYCCompletedPayload };
+
+
+interface KYCStartedPayload {
+    userId: string;
+    email: string;
+    kycStatus: KYCStatus;
+    startedAt: Date;
+}
+
+interface KYCCompletedPayload {
+    userId: string;
+    email: string;
+    kycStatus: KYCStatus;
+    completedAt: Date;
+}
+
+type UserServiceError =
+    | { type: 'USER_NOT_FOUND'; }
+    | { type: 'USER_ALREADY_VERIFIED'; }
+    | { type: 'USER_ALREADY_IN_KYC_PROCESS'; }
+    | { type: 'USER_NOT_IN_KYC_PROCESS'; }
+    | { type: 'SERVER_ERROR', error: Error };
+
+
 export interface IUserService {
     profile(userId: string): Promise<ApiResult<UserProfileDto>>;
     updateProfile(userId: string, dto: UpdateUserDto): Promise<ApiResult<UserProfileDto>>;
@@ -14,11 +42,14 @@ export interface IUserService {
 }
 
 export class UserService implements IUserService {
-    private userRepository: Repository<User>;
+    private readonly userRepository: Repository<User>;
+    private readonly eventPublisher: EventPublisher;
     constructor(
-        userRepository: Repository<User> = AppDataSource.getRepository(User)
+        userRepository: Repository<User> = AppDataSource.getRepository(User),
+        eventPublisher: EventPublisher = new EventPublisher()
     ) {
         this.userRepository = userRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -70,12 +101,13 @@ export class UserService implements IUserService {
             }
 
             const userData = {
-                firstName: dto.firstName || user.firstName,
-                otherNames: dto.otherNames || user.otherNames,
-                lastName: dto.lastName || user.lastName,
-                phoneNumber: dto.phoneNumber || user.phoneNumber,
-                dateOfBirth: dto.dateOfBirth || user.dateOfBirth,
-                address: dto.address || user.address,
+                ...user,
+                firstName: dto.firstName ?? user.firstName,
+                otherNames: dto.otherNames ?? user.otherNames,
+                lastName: dto.lastName ?? user.lastName,
+                phoneNumber: dto.phoneNumber ?? user.phoneNumber,
+                dateOfBirth: dto.dateOfBirth ?? user.dateOfBirth,
+                address: dto.address ?? user.address,
             }
 
             const updatedUser = await this.userRepository.update(userId, userData);
@@ -83,7 +115,7 @@ export class UserService implements IUserService {
                 return ApiResult.notFound('User not found');
             }
 
-            const updatedUserData = await this.userRepository.findOne({ where: { id: userId } });
+            const updatedUserData = await this.findUserById(userId);
             if (!updatedUserData) {
                 return ApiResult.notFound('User not found');
             }
@@ -111,38 +143,31 @@ export class UserService implements IUserService {
                 userId: userId
             }));
 
-            const user = await this.userRepository.findOne({ where: { id: userId } });
+            const result = await this.handleKycVerificationStart(userId);
 
-            if (!user) {
-                return ApiResult.notFound('User not found');
-            }
-            if (user.kycStatus === KYCStatus.VERIFIED) {
-                return ApiResult.conflict('User already verified');
-            }
-            if (user.kycStatus === KYCStatus.IN_PROGRESS) {
-                return ApiResult.conflict('User already in KYC process');
-            }
-            if (user.kycStatus === KYCStatus.NOT_STARTED) {
-                user.kycStatus = KYCStatus.IN_PROGRESS;
-                await this.userRepository.save(user);
+            if ('type' in result) {
+                switch (result.type) {
+                    case "USER_NOT_FOUND":
+                        return ApiResult.notFound('User not found');
+                    case "USER_ALREADY_VERIFIED":
+                        return ApiResult.conflict('User already verified');
+                    case "USER_ALREADY_IN_KYC_PROCESS":
+                        return ApiResult.conflict('User already in KYC process');
+                    case "USER_NOT_IN_KYC_PROCESS":
+                        return ApiResult.conflict('User not in KYC process');
+                    case "SERVER_ERROR":
+                        return ApiResult.serverError('Server error', [result.error.message]);
+                    default:
+                        return result;
+                }
             }
 
-            user.kycStatus = KYCStatus.IN_PROGRESS;
-            await this.userRepository.save(user);
+            const { user, event } = result;
+            await this.eventPublisher.publish(event.type, event.payload);
+
+            logger.info('KYC verification started', formatLogMetadata({ userId }));
+
             const userProfile = UserProfileDto.fromEntity(user);
-
-            // Publish an event to start KYC verification
-            const eventPublisher = new EventPublisher();
-            await eventPublisher.publish('KYC_VERIFICATION_STARTED', {
-                userId: user.id,
-                email: user.email,
-                kycStatus: user.kycStatus,
-                startedAt: new Date(),
-            });
-
-            logger.info('KYC verification started', formatLogMetadata({
-                userId: userId
-            }));
 
             return ApiResult.success(userProfile, 'KYC verification started successfully', StatusCode.OK);
         } catch (e) {
@@ -166,34 +191,30 @@ export class UserService implements IUserService {
                 userId: userId
             }));
 
-            const user = await this.userRepository.findOne({where: {id: userId}});
+            const result = await this.handleKycVerificationComplete(userId, isApproved);
+            if ('type' in result) {
+                switch (result.type) {
+                    case "USER_NOT_FOUND":
+                        return ApiResult.notFound('User not found');
+                    case "USER_ALREADY_VERIFIED":
+                        return ApiResult.conflict('User already verified');
+                    case "USER_ALREADY_IN_KYC_PROCESS":
+                        return ApiResult.conflict('User already in KYC process');
+                    case "USER_NOT_IN_KYC_PROCESS":
+                        return ApiResult.conflict('User not in KYC process');
+                    case "SERVER_ERROR":
+                        return ApiResult.serverError('Server error', [result.error.message]);
+                    default:
+                        return result;
+                }
+            }
 
-            if (!user) {
-                return ApiResult.notFound('User not found');
-            }
-            if (user.kycStatus === KYCStatus.VERIFIED) {
-                return ApiResult.conflict('User already verified');
-            }
-            if (user.kycStatus === KYCStatus.NOT_STARTED) {
-                return ApiResult.conflict('User not in KYC process');
-            }
+            const { user, event } = result;
+            await this.eventPublisher.publish(event.type, event.payload);
 
-            user.kycStatus = isApproved ? KYCStatus.VERIFIED : KYCStatus.REJECTED;
-            await this.userRepository.save(user);
+            logger.info('KYC verification completed', formatLogMetadata({ userId }));
+
             const userProfile = UserProfileDto.fromEntity(user);
-
-            // Publish an event to complete KYC verification
-            const eventPublisher = new EventPublisher();
-            await eventPublisher.publish('KYC_VERIFICATION_COMPLETED', {
-                userId: user.id,
-                email: user.email,
-                kycStatus: user.kycStatus,
-                completedAt: new Date(),
-            });
-
-            logger.info('KYC verification completed', formatLogMetadata({
-                userId: userId
-            }));
 
             return ApiResult.success(userProfile, 'KYC verification completed successfully', StatusCode.OK);
         } catch (e) {
@@ -205,4 +226,81 @@ export class UserService implements IUserService {
         }
     }
 
+    /**
+     * Finds a user by ID
+     * @private
+     */
+    private async findUserById(userId: string): Promise<User | null> {
+        return this.userRepository.findOne({ where: { id: userId } });
+    }
+
+    private async handleKycVerificationStart(userId: string): Promise<
+        | { user: User; event: KYCEvent }
+        | UserServiceError
+    > {
+        const user = await this.findUserById(userId);
+        if (!user) {
+            return { type: 'USER_NOT_FOUND' };
+        }
+
+        if (user.kycStatus === KYCStatus.VERIFIED) {
+            return { type: 'USER_ALREADY_VERIFIED'};
+        }
+
+        if (user.kycStatus === KYCStatus.IN_PROGRESS) {
+            return { type: 'USER_ALREADY_IN_KYC_PROCESS' };
+        }
+
+        user.kycStatus = KYCStatus.IN_PROGRESS;
+        await this.userRepository.save(user);
+
+        const event: KYCEvent = {
+            type: 'KYC_VERIFICATION_STARTED',
+            payload: {
+                userId: user.id,
+                email: user.email,
+                kycStatus: user.kycStatus,
+                startedAt: new Date(),
+            },
+        }
+
+        return { user, event };
+    }
+
+    private async handleKycVerificationComplete(
+        userId: string,
+        isApproved: boolean
+    ): Promise<
+        | { user: User; event: KYCEvent }
+        | UserServiceError
+        >
+    {
+        const user = await this.findUserById(userId);
+        if (!user) {
+            return { type: 'USER_NOT_FOUND' };
+        }
+
+        if (user.kycStatus === KYCStatus.VERIFIED) {
+            return { type: 'USER_ALREADY_VERIFIED' };
+        }
+
+        if (user.kycStatus === KYCStatus.NOT_STARTED) {
+            return { type: 'USER_NOT_IN_KYC_PROCESS' };
+        }
+
+        user.kycStatus = isApproved ? KYCStatus.VERIFIED : KYCStatus.REJECTED;
+        await this.userRepository.save(user);
+
+        const event: KYCEvent = {
+            type: 'KYC_VERIFICATION_COMPLETED',
+            payload: {
+                userId: user.id,
+                email: user.email,
+                kycStatus: user.kycStatus,
+                completedAt: new Date(),
+            },
+        }
+
+        return { user, event };
+    }
 }

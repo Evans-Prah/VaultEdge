@@ -1,6 +1,11 @@
 import {IUserService, UserService} from "./user.service";
 import {NextFunction, Request, Response} from "express";
 import {UpdateUserDto} from "./dto/user-profile.dto";
+import {TypedRequest} from "../../types/express-extension";
+
+type KycCompletionQuery = {
+    isApproved: string;
+};
 
 export class UserController {
     private userService: IUserService;
@@ -45,17 +50,14 @@ export class UserController {
         res: Response,
         next: NextFunction
     ): Promise<void> => {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: 'Unauthorized' });
-                return;
-            }
 
-            const result = await this.userService.profile(req.user.id);
-            res.status(result.status_code).json(result);
-        } catch (error) {
-            next(error);
+        if (!req.user?.id) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
         }
+
+        const result = await this.userService.profile(req.user.id);
+        res.status(result.status_code).json(result);
     };
 
     /**
@@ -102,21 +104,26 @@ export class UserController {
      *         description: Internal server error
      */
     updateProfile = async (
-        req: Request,
+        req: TypedRequest<UpdateUserDto>,
         res: Response,
         next: NextFunction) : Promise<void> => {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: 'Unauthorized' });
-                return;
-            }
 
-            const payload = req.body as UpdateUserDto;
-            const result = await this.userService.updateProfile(req.user.id, payload);
-            res.status(result.status_code).json(result);
-        } catch (error) {
-            next(error);
+        // if (!req.user) {
+        //     res.status(401).json({ message: 'Unauthorized' });
+        //     return;
+        // }
+        //
+        // const payload = req.body as UpdateUserDto;
+        // const result = await this.userService.updateProfile(req.user.id, payload);
+        // res.status(result.status_code).json(result);
+
+        if (!req.user?.id) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
         }
+
+        const result = await this.userService.updateProfile(req.user.id, req.body);
+        res.status(result.status_code).json(result);
     }
 
 
@@ -150,17 +157,14 @@ export class UserController {
         res: Response,
         next: NextFunction
     ): Promise<void> => {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: 'Unauthorized' });
-                return;
-            }
 
-            const result = await this.userService.startKycVerification(req.user.id);
-            res.status(result.status_code).json(result);
-        } catch (error) {
-            next(error);
+        if (!req.user) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
         }
+
+        const result = await this.userService.startKycVerification(req.user.id);
+        res.status(result.status_code).json(result);
     }
 
     /**
@@ -197,25 +201,25 @@ export class UserController {
      *         description: Internal server error
      */
     completeKycVerification = async (
-        req: Request,
+        req: TypedRequest<{}, KycCompletionQuery>,
         res: Response,
         next: NextFunction
     ) : Promise<void> => {
-        try {
-            if (!req.user) {
-                res.status(401).json({ message: 'Unauthorized' });
-                return;
-            }
-            const isApproved = req.query.isApproved;
-            if (isApproved !== 'true' && isApproved !== 'false') {
-                res.status(400).json({ message: 'Invalid isApproved value' });
-                return;
-            }
-            const isApprovedBoolean = isApproved === 'true';
-            const result = await this.userService.completeKycVerification(req.user.id, isApprovedBoolean);
-            res.status(result.status_code).json(result);
-        } catch (error) {
-            next(error);
+
+        if (!req.user?.id) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
         }
+
+        const { isApproved } = req.query;
+
+        if (isApproved !== 'true' && isApproved !== 'false') {
+            res.status(400).json({ message: 'Invalid isApproved value' });
+            return;
+        }
+
+        const isApprovedBoolean = isApproved === 'true';
+        const result = await this.userService.completeKycVerification(req.user.id, isApprovedBoolean);
+        res.status(result.status_code).json(result);
     }
 }
